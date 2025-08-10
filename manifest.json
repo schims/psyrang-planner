@@ -1,0 +1,23 @@
+{
+  "short_name": "Psyrang",
+  "name": "Psyrang Planner",
+  "description": "A personalized, intelligent weekly planner for professional and personal tasks.",
+  "icons": [
+    {
+      "src": "https://www.psyrang.com/wp-content/uploads/2023/10/logo-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://www.psyrang.com/wp-content/uploads/2023/10/logo-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#111827",
+  "background_color": "#f0f2f5"
+}

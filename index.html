@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Psyrang Planner</title>
+
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#4f46e5">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f0f2f5; transition: background-color 0.3s ease; }
+        html.dark { background-color: #111827; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        html.dark ::-webkit-scrollbar-thumb { background: #4a5568; }
+        .masonry-grid { column-count: 1; column-gap: 1rem; }
+        @media (min-width: 768px) { .masonry-grid { column-count: 2; } }
+        @media (min-width: 1280px) { .masonry-grid { column-count: 3; } }
+        @media (min-width: 1536px) { .masonry-grid { column-count: 4; } }
+        .masonry-item { break-inside: avoid; margin-bottom: 1rem; }
+        .prose { color: #374151; }
+        .dark .prose { color: #d1d5db; }
+        .prose strong { color: #111827; }
+        .dark .prose strong { color: #f9fafb; }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div style="display: flex; justify-content: center; align-items: center; height: 100vh; font-family: Inter, sans-serif; color: #4a5568;">
+            Initializing Psyrang Planner...
+        </div>
+    </div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef, useMemo } = React;
+        
+        const dateHelpers = {
+            startOfWeek: (d, o={w:1}) => {const t=new Date(d); const a=t.getDay(),e=(a<o.w?7:0)+a-o.w; return t.setDate(t.getDate()-e),t.setHours(0,0,0,0),t},
+            endOfWeek: (d, o={w:1}) => {const t=dateHelpers.startOfWeek(d,o); return t.setDate(t.getDate()+6),t.setHours(23,59,59,999),t},
+            getWeek: (d) => {const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())); const a=new Date(Date.UTC(t.getUTCFullYear(),0,1)); return Math.ceil(((t-a)/864e5+1)/7)},
+            getYear: (d) => d.getFullYear(),
+            eachDayOfInterval: ({start:d,end:o}) => {const t=[]; let a=new Date(d); for(;a<=o;)t.push(new Date(a)),a.setDate(a.getDate()+1); return t},
+            isToday: (d) => {const t=new Date; return d.getDate()===t.getDate()&&d.getMonth()===t.getMonth()&&d.getFullYear()===t.getFullYear()},
+            format: (d, o) => {if("do MMMM"===o){const t=d.getDate(),a=d.toLocaleString("default",{month:"long"});let e="th";return 1===t%10&&11!==t?e="st":2===t%10&&12!==t?e="nd":3===t%10&&13!==t&&(e="rd"),`${t}${e} ${a}`}return d.toLocaleDateString()},
+            addWeeks: (d, o) => new Date(d.setDate(d.getDate()+7*o)),
+            subWeeks: (d, o) => new Date(d.setDate(d.getDate()-7*o)),
+        };
+
+        const ICONS = {
+            Feather: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"></path><line x1="16" y1="8" x2="2" y2="22"></line><line x1="17.5" y1="15" x2="9" y2="15"></line></svg>,
+            ChevronLeft: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>,
+            ChevronRight: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>,
+            Moon: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>,
+            Sun: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>,
+            Plus: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>,
+            Sparkles: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.9 5.8-5.8 1.9 5.8 1.9L12 21l1.9-5.8 5.8-1.9-5.8-1.9L12 3z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>,
+            Copy: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>,
+            ChevronDown: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>,
+            ChevronUp: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 15 6-6 6 6"/></svg>,
+            Trash2: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>,
+            Maximize2: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>,
+            Minimize2: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M3 21l7-7"/></svg>,
+            Calendar: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>,
+            CalendarDays: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/><path d="M16 18h.01"/></svg>,
+            Loader2: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>,
+            AlertTriangle: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>,
+            BarChart2: p=><svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>,
+        };
+        const Icon = ({ name, ...props }) => {
+            const IconComponent = ICONS[name];
+            return IconComponent ? <IconComponent {...props} /> : null;
+        };
+        
+        const useMediaQuery = (query) => {
+            const [matches, setMatches] = useState(window.matchMedia(query).matches);
+            useEffect(() => {
+                const mediaQueryList = window.matchMedia(query);
+                const listener = (event) => setMatches(event.matches);
+                mediaQueryList.addEventListener('change', listener);
+                return () => mediaQueryList.removeEventListener('change', listener);
+            }, [query]);
+            return matches;
+        };
+
+        const App = () => {
+            const [theme, setTheme] = useState('light');
+            const [currentDate, setCurrentDate] = useState(new Date());
+            const [appState, setAppState] = useState({ weeklyTasks: [], reminders: [], weeklyPlans: {} });
+            const [mobileView, setMobileView] = useState('Today');
+            const [isModalOpen, setModalOpen] = useState(false);
+            const [modalContent, setModalContent] = useState(null);
+            
+            const isMobile = useMediaQuery('(max-width: 1023px)');
+            const draggedItem = useRef(null);
+
+            const APP_STATE_KEY = 'psyrangPlannerState_v6';
+            const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+            const DAY_SECTIONS = ['morning', 'afternoon', 'evening', 'night'];
+
+            const getWeekId = (date) => `${dateHelpers.getYear(date)}-W${String(dateHelpers.getWeek(date)).padStart(2, '0')}`;
+            const createNewId = () => `id-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            const createNewTask = (text) => ({
+                id: createNewId(),
+                text,
+                completed: false,
+                isCollapsed: false,
+                subtasks: [],
+            });
+
+            // This function now calls our secure Netlify serverless function
+            const callGeminiApi = async (prompt, type) => {
+                const apiEndpoint = '/.netlify/functions/gemini';
+                const response = await fetch(apiEndpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt, type }),
+                });
+
+                if (!response.ok) {
+                    const errorBody = await response.text();
+                    throw new Error(`Netlify function error: ${response.status} ${errorBody}`);
+                }
+                return await response.json();
+            };
+
+            useEffect(() => {
+                const savedState = localStorage.getItem(APP_STATE_KEY);
+                if (savedState) {
+                    try {
+                        const parsed = JSON.parse(savedState);
+                        if(parsed.weeklyTasks && parsed.reminders && parsed.weeklyPlans) setAppState(parsed);
+                        else throw new Error("Invalid state structure");
+                    } catch(e) { 
+                        console.error("Could not parse saved state, initializing fresh.", e);
+                        setAppState({ weeklyTasks: [createNewTask("Finalize research paper outline")], reminders: [createNewTask("Book dentist appointment")], weeklyPlans: {} });
+                    }
+                } else {
+                    setAppState({ weeklyTasks: [createNewTask("Finalize research paper outline")], reminders: [createNewTask("Book dentist appointment")], weeklyPlans: {} });
+                }
+                if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                    setTheme('dark');
+                }
+            }, []);
+
+            useEffect(() => { localStorage.setItem(APP_STATE_KEY, JSON.stringify(appState)); }, [appState]);
+            useEffect(() => { document.documentElement.classList.toggle('dark', theme === 'dark'); }, [theme]);
+
+            const currentWeekId = useMemo(() => getWeekId(currentDate), [currentDate]);
+            const currentWeekData = useMemo(() => {
+                const weekStart = dateHelpers.startOfWeek(currentDate);
+                const weekEnd = dateHelpers.endOfWeek(currentDate);
+                const days = dateHelpers.eachDayOfInterval({ start: weekStart, end: weekEnd });
+                const plan = appState.weeklyPlans[currentWeekId] || { dailyPlans: DAYS_OF_WEEK.reduce((acc, day) => ({ ...acc, [day]: DAY_SECTIONS.reduce((sAcc, sec) => ({...sAcc, [sec]: []}), {}) }), {}) };
+                return { id: currentWeekId, label: `Week ${dateHelpers.getWeek(currentDate)}, ${dateHelpers.getYear(currentDate)}`, days: days.map((day, index) => ({ date: day, name: DAYS_OF_WEEK[index], plan: plan.dailyPlans[DAYS_OF_WEEK[index]] })) };
+            }, [currentDate, appState.weeklyPlans, currentWeekId]);
+
+            const updateState = (updater) => setAppState(prevState => updater(JSON.parse(JSON.stringify(prevState))));
+            
+            const handleTaskUpdate = (taskId, updates) => {
+                updateState(draft => {
+                    const findAndUpdate = (tasks) => {
+                        for (const task of tasks) {
+                            if (task.id === taskId) { Object.assign(task, updates); return true; }
+                            if (task.subtasks && findAndUpdate(task.subtasks)) return true;
+                        }
+                        return false;
+                    };
+                    findAndUpdate(draft.weeklyTasks);
+                    findAndUpdate(draft.reminders);
+                    Object.values(draft.weeklyPlans).forEach(week => Object.values(week.dailyPlans).forEach(day => Object.values(day).forEach(section => findAndUpdate(section))));
+                    return draft;
+                });
+            };
+
+            const handleAddSubtask = (parentTaskId) => {
+                 updateState(draft => {
+                    const findAndAdd = (tasks) => {
+                        for (const task of tasks) {
+                            if (task.id === parentTaskId) { task.subtasks.push(createNewTask("New subtask")); task.isCollapsed = false; return true; }
+                            if (task.subtasks && findAndAdd(task.subtasks)) return true;
+                        }
+                        return false;
+                    };
+                    findAndAdd(draft.weeklyTasks); findAndAdd(draft.reminders);
+                    Object.values(draft.weeklyPlans).forEach(week => Object.values(week.dailyPlans).forEach(day => Object.values(day).forEach(section => findAndAdd(section))));
+                    return draft;
+                });
+            };
+
+            const handleDeleteTask = (taskId) => {
+                updateState(draft => {
+                    const findAndRemove = (tasks) => {
+                        for (let i = tasks.length - 1; i >= 0; i--) {
+                            if (tasks[i].id === taskId) { tasks.splice(i, 1); return true; }
+                            if (tasks[i].subtasks && findAndRemove(tasks[i].subtasks)) return true;
+                        }
+                        return false;
+                    };
+                    findAndRemove(draft.weeklyTasks); findAndRemove(draft.reminders);
+                    Object.values(draft.weeklyPlans).forEach(week => Object.values(week.dailyPlans).forEach(day => Object.values(day).forEach(section => findAndRemove(section))));
+                    return draft;
+                });
+            };
+            
+            const handleAiBreakdown = async (taskId, taskText) => {
+                openModal('loading', { message: 'Generating subtasks with AI...' });
+                const prompt = `Break down the following task into a list of smaller, actionable subtasks. Task: "${taskText}". Respond with only a JSON object with a single key "subtasks" which is an array of strings.`;
+                try {
+                    const { subtasks } = await callGeminiApi(prompt, 'breakdown');
+                    updateState(draft => {
+                        const findAndAdd = (tasks) => {
+                            for (const task of tasks) {
+                                if (task.id === taskId) { task.subtasks.push(...subtasks.map(st => createNewTask(st))); task.isCollapsed = false; return true; }
+                                if (task.subtasks && findAndAdd(task.subtasks)) return true;
+                            }
+                            return false;
+                        };
+                        findAndAdd(draft.weeklyTasks); findAndAdd(draft.reminders);
+                        Object.values(draft.weeklyPlans).forEach(week => Object.values(week.dailyPlans).forEach(day => Object.values(day).forEach(section => findAndAdd(section))));
+                        return draft;
+                    });
+                    closeModal();
+                } catch (error) { console.error("AI Breakdown failed:", error); openModal('error', { message: 'Failed to get AI suggestions.' }); }
+            };
+
+            const handleCopyTask = (taskToCopy, destination) => {
+                updateState(draft => {
+                    const regenerateIds = (task) => {
+                        task.id = createNewId();
+                        task.subtasks.forEach(regenerateIds);
+                        return task;
+                    };
+                    const newTask = regenerateIds(JSON.parse(JSON.stringify(taskToCopy)));
+                    if (!draft.weeklyPlans[destination.weekId]) {
+                        draft.weeklyPlans[destination.weekId] = { dailyPlans: DAYS_OF_WEEK.reduce((acc, day) => ({ ...acc, [day]: DAY_SECTIONS.reduce((sAcc, sec) => ({...sAcc, [sec]: []}), {}) }), {}) };
+                    }
+                    const dayPlan = draft.weeklyPlans[destination.weekId].dailyPlans[destination.dayName];
+                    if (dayPlan && dayPlan[destination.sectionName]) {
+                        dayPlan[destination.sectionName].push(newTask);
+                    }
+                    return draft;
+                });
+                closeModal();
+            };
+
+            const handleDragStart = (e, task, source) => { draggedItem.current = { task, source }; e.dataTransfer.effectAllowed = 'move'; };
+            const handleDragOver = (e) => e.preventDefault();
+            const handleDrop = (e, target) => {
+                e.preventDefault();
+                if (!draggedItem.current) return;
+                const { task, source } = draggedItem.current;
+                const isCopy = source.type === 'weeklyTasks';
+                
+                updateState(draft => {
+                    if (!isCopy) {
+                        const findAndRemove = (tasks) => {
+                            for (let i=0; i<tasks.length; i++) { if (tasks[i].id === task.id) { tasks.splice(i, 1); return true; } }
+                            return false;
+                        };
+                        if (source.type === 'reminders') {
+                            findAndRemove(draft.reminders);
+                        } else if (source.type === 'dayPlan') {
+                            const section = draft.weeklyPlans[source.weekId]?.dailyPlans[source.dayName]?.[source.sectionName];
+                            if (section) findAndRemove(section);
+                        }
+                    }
+                    const taskToDrop = isCopy ? { ...JSON.parse(JSON.stringify(task)), id: createNewId() } : task;
+                    if (target.type === 'weeklyTasks') {
+                        draft.weeklyTasks.push(taskToDrop);
+                    } else if (target.type === 'reminders') {
+                        draft.reminders.push(taskToDrop);
+                    } else if (target.type === 'dayPlan') {
+                        if (!draft.weeklyPlans[target.weekId]) {
+                            draft.weeklyPlans[target.weekId] = { dailyPlans: DAYS_OF_WEEK.reduce((acc, day) => ({ ...acc, [day]: DAY_SECTIONS.reduce((sAcc, sec) => ({...sAcc, [sec]: []}), {}) }), {}) };
+                        }
+                        draft.weeklyPlans[target.weekId].dailyPlans[target.dayName][target.sectionName].push(taskToDrop);
+                    }
+                    return draft;
+                });
+                draggedItem.current = null;
+            };
+
+            const openModal = (type, data = {}) => { setModalContent({ type, ...data }); setModalOpen(true); };
+            const closeModal = () => setModalOpen(false);
+
+            const handleAddNewTaskToList = (taskText, listType) => {
+                if (!taskText.trim()) return;
+                updateState(draft => { draft[listType].push(createNewTask(taskText)); return draft; });
+                closeModal();
+            };
+            
+            const openWeeklyReportModal = async () => {
+                openModal('loading', { message: 'Generating weekly report...' });
+                const completedTasks = [];
+                const currentPlan = appState.weeklyPlans[currentWeekId];
+                if (currentPlan) {
+                    Object.values(currentPlan.dailyPlans).forEach(day => Object.values(day).forEach(section => {
+                        section.forEach(task => {
+                            if (task.completed) completedTasks.push(task.text);
+                            task.subtasks.forEach(sub => { if (sub.completed) completedTasks.push(`Sub: ${sub.text}`); });
+                        });
+                    }));
+                }
+                const prompt = `Based on the following list of completed tasks for the week, generate a brief, insightful, and encouraging summary. Format it as markdown. Completed tasks: ${JSON.stringify(completedTasks)}`;
+                try { 
+                    const { report } = await callGeminiApi(prompt, 'report'); 
+                    openModal('weeklyReport', { report }); 
+                } catch (error) { 
+                    console.error("Weekly report failed:", error);
+                    openModal('error', { message: 'Failed to generate report.' }); 
+                }
+            };
+            
+            const TaskItem = ({ task, source }) => {
+                const [isEditing, setIsEditing] = useState(false);
+                const [editText, setEditText] = useState(task.text);
+                const inputRef = useRef(null);
+                useEffect(() => { if (isEditing) { inputRef.current?.focus(); inputRef.current?.select(); } }, [isEditing]);
+                const handleSave = () => { if (editText.trim()) handleTaskUpdate(task.id, { text: editText }); setIsEditing(false); };
+
+                return (
+                    <div className="group/task ml-4 first:ml-0">
+                        <div draggable onDragStart={(e) => handleDragStart(e, task, source)} className="flex items-start p-2 rounded-md transition-colors hover:bg-gray-200 dark:hover:bg-gray-700 cursor-grab">
+                            <input type="checkbox" checked={task.completed} onChange={(e) => handleTaskUpdate(task.id, { completed: e.target.checked })} className="mt-1 mr-3 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"/>
+                            <div className="flex-grow min-w-0">
+                                {isEditing ? (
+                                    <input ref={inputRef} value={editText} onChange={(e) => setEditText(e.target.value)} onBlur={handleSave} onKeyDown={(e) => e.key === 'Enter' && handleSave()} className="w-full bg-transparent border-b border-gray-400 focus:outline-none"/>
+                                ) : (
+                                    <p onClick={() => setIsEditing(true)} className={`flex-grow cursor-text truncate ${task.completed ? 'line-through text-gray-500' : ''}`}>{task.text}</p>
+                                )}
+                            </div>
+                            <div className="flex items-center ml-2 opacity-0 group-hover/task:opacity-100 transition-opacity flex-shrink-0">
+                                <button onClick={() => handleAddSubtask(task.id)} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Add Sub-task"><Icon name="Plus" size={16} /></button>
+                                <button onClick={() => openModal('copyTask', { task })} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Copy to..."><Icon name="Copy" size={16} /></button>
+                                <button onClick={() => handleAiBreakdown(task.id, task.text)} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="AI Breakdown"><Icon name="Sparkles" size={16} /></button>
+                                {task.subtasks.length > 0 && <button onClick={() => handleTaskUpdate(task.id, { isCollapsed: !task.isCollapsed })} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Toggle Sub-tasks"><Icon name={task.isCollapsed ? 'ChevronDown' : 'ChevronUp'} size={16} /></button>}
+                                <button onClick={() => handleDeleteTask(task.id)} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Delete Task"><Icon name="Trash2" size={16} /></button>
+                            </div>
+                        </div>
+                        {!task.isCollapsed && task.subtasks.length > 0 && <div className="pl-6 border-l-2 border-gray-200 dark:border-gray-700 ml-4">{task.subtasks.map(subtask => <SubTaskItem key={subtask.id} task={subtask} />)}</div>}
+                    </div>
+                );
+            };
+
+            const SubTaskItem = ({ task }) => {
+                const [isEditing, setIsEditing] = useState(false);
+                const [editText, setEditText] = useState(task.text);
+                const inputRef = useRef(null);
+                useEffect(() => { if (isEditing) { inputRef.current?.focus(); inputRef.current?.select(); } }, [isEditing]);
+                const handleSave = () => { if (editText.trim()) handleTaskUpdate(task.id, { text: editText }); setIsEditing(false); };
+                return (
+                    <div className="group/task flex items-start p-2 rounded-md">
+                        <input type="checkbox" checked={task.completed} onChange={(e) => handleTaskUpdate(task.id, { completed: e.target.checked })} className="mt-1 mr-3 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"/>
+                        <div className="flex-grow min-w-0">
+                            {isEditing ? <input ref={inputRef} value={editText} onChange={(e) => setEditText(e.target.value)} onBlur={handleSave} onKeyDown={(e) => e.key === 'Enter' && handleSave()} className="w-full bg-transparent border-b border-gray-400 focus:outline-none"/> : <p onClick={() => setIsEditing(true)} className={`flex-grow cursor-text truncate ${task.completed ? 'line-through text-gray-500' : ''}`}>{task.text}</p>}
+                        </div>
+                        <div className="flex items-center ml-2 opacity-0 group-hover/task:opacity-100 transition-opacity flex-shrink-0">
+                            <button onClick={() => handleDeleteTask(task.id)} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Delete Sub-task"><Icon name="Trash2" size={16} /></button>
+                        </div>
+                    </div>
+                );
+            };
+
+            const Card = ({ title, children, listType, onDrop, isMinimized, onToggleMinimize }) => (
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md flex flex-col">
+                    <div className="flex justify-between items-center p-3 border-b border-gray-200 dark:border-gray-700">
+                        <h3 className="font-semibold text-gray-800 dark:text-gray-200">{title}</h3>
+                        <div className="flex items-center space-x-1">
+                            <button onClick={() => openModal('addTask', { preselectedList: listType })} className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600" title="Add Task"><Icon name="Plus" size={20} className="text-gray-600 dark:text-gray-400"/></button>
+                            <button onClick={onToggleMinimize} className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600" title={isMinimized ? "Maximize" : "Minimize"}><Icon name={isMinimized ? "Maximize2" : "Minimize2"} size={20} className="text-gray-600 dark:text-gray-400"/></button>
+                        </div>
+                    </div>
+                    {!isMinimized && <div onDrop={(e) => onDrop && onDrop(e, {type: listType})} onDragOver={handleDragOver} className="p-2 space-y-1 overflow-y-auto" style={{maxHeight: '40vh'}}>{children}</div>}
+                </div>
+            );
+            const PersistentListCard = ({ title, listType }) => {
+                const [isMinimized, setIsMinimized] = useState(false);
+                const tasks = appState[listType];
+                return <Card title={title} listType={listType} onDrop={handleDrop} isMinimized={isMinimized} onToggleMinimize={() => setIsMinimized(!isMinimized)}>{tasks.length > 0 ? tasks.map(task => <TaskItem key={task.id} task={task} source={{type: listType}} />) : <p className="text-sm text-gray-400 dark:text-gray-500 p-4 text-center">No tasks here yet.</p>}</Card>;
+            };
+            const DayCard = ({ dayData }) => {
+                const [isMinimized, setIsMinimized] = useState(false);
+                const isCurrentDay = dateHelpers.isToday(dayData.date);
+                return (
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md flex flex-col masonry-item">
+                        <div className={`flex justify-between items-center p-3 border-b border-gray-200 dark:border-gray-700 ${isCurrentDay ? 'bg-indigo-50 dark:bg-indigo-900/50' : ''}`}>
+                            <div><h3 className="font-semibold text-gray-800 dark:text-gray-200">{dayData.name}</h3><p className="text-sm text-gray-500 dark:text-gray-400">{dateHelpers.format(dayData.date, 'do MMMM')}</p></div>
+                            <button onClick={() => setIsMinimized(!isMinimized)} className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600" title={isMinimized ? "Maximize" : "Minimize"}><Icon name={isMinimized ? "Maximize2" : "Minimize2"} size={20} className="text-gray-600 dark:text-gray-400"/></button>
+                        </div>
+                        {!isMinimized && <div className="divide-y divide-gray-200 dark:divide-gray-700">{DAY_SECTIONS.map(section => <div key={section} onDrop={(e) => handleDrop(e, {type: 'dayPlan', weekId: currentWeekId, dayName: dayData.name, sectionName: section})} onDragOver={handleDragOver} className="p-2 min-h-[4rem]"><h4 className="text-xs font-bold uppercase text-gray-400 dark:text-gray-500 mb-2 pl-2">{section}</h4>{dayData.plan[section].map(task => <TaskItem key={task.id} task={task} source={{type: 'dayPlan', weekId: currentWeekId, dayName: dayData.name, sectionName: section}} />)}</div>)}</div>}
+                    </div>
+                );
+            };
+            const Modal = ({ isOpen, onClose, children }) => {
+                if (!isOpen) return null;
+                return <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center" onClick={onClose}><div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md m-4" onClick={e => e.stopPropagation()}>{children}</div></div>;
+            };
+
+            const AddTaskModalContent = ({ preselectedList }) => {
+                const [taskText, setTaskText] = useState('');
+                const [listType, setListType] = useState(preselectedList || 'weeklyTasks');
+                return (
+                    <div>
+                        <h3 className="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-4">Add New Task</h3>
+                        <textarea autoFocus value={taskText} onChange={(e) => setTaskText(e.target.value)} placeholder="e.g., Draft chapter 1 of new book" className="w-full p-2 border rounded-md bg-gray-100 dark:bg-gray-700 dark:text-white focus:ring-indigo-500 focus:border-indigo-500" rows="3"></textarea>
+                        <div className="mt-4">
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Add to List:</label>
+                            <select value={listType} onChange={e => setListType(e.target.value)} disabled={!!preselectedList} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md dark:bg-gray-700 dark:text-white disabled:opacity-50 disabled:bg-gray-200 dark:disabled:bg-gray-600"><option value="weeklyTasks">Weekly Tasks</option><option value="reminders">Reminders</option></select>
+                        </div>
+                        <div className="mt-6 flex justify-end space-x-3"><button type="button" onClick={closeModal} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500">Cancel</button><button type="button" onClick={() => handleAddNewTaskToList(taskText, listType)} className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Add Task</button></div>
+                    </div>
+                );
+            };
+            const WeeklyReportModalContent = ({ report }) => (<div><h3 className="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-4 flex items-center"><Icon name="BarChart2" className="mr-2" /> Weekly Report</h3><div className="prose dark:prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: report.replace(/\n/g, '<br />') }}></div><div className="mt-6 flex justify-end"><button type="button" onClick={closeModal} className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Close</button></div></div>);
+            const FabActionsModalContent = () => (
+                <div>
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Actions</h3>
+                    <div className="space-y-3">
+                        <button onClick={() => { closeModal(); openModal('addTask'); }} className="w-full flex items-center text-left p-4 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"><Icon name="Plus" className="mr-3"/> Add New Task</button>
+                        <button onClick={() => { closeModal(); openWeeklyReportModal(); }} className="w-full flex items-center text-left p-4 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"><Icon name="BarChart2" className="mr-3"/> View Weekly Report</button>
+                    </div>
+                </div>
+            );
+            const CopyTaskModalContent = ({ task }) => {
+                const [selectedDay, setSelectedDay] = useState(DAYS_OF_WEEK[0]);
+                const [selectedSection, setSelectedSection] = useState(DAY_SECTIONS[0]);
+                const handleConfirmCopy = () => {
+                    handleCopyTask(task, { weekId: currentWeekId, dayName: selectedDay, sectionName: selectedSection });
+                };
+                return (
+                    <div>
+                        <h3 className="text-lg font-medium text-gray-900 dark:text-white">Copy Task</h3>
+                        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Copy "<span className="font-semibold">{task.text}</span>" to a new location in the current week.</p>
+                        <div className="mt-4 space-y-4">
+                            <div>
+                                <label htmlFor="day-select" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Day</label>
+                                <select id="day-select" value={selectedDay} onChange={e => setSelectedDay(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md dark:bg-gray-700 dark:text-white">
+                                    {DAYS_OF_WEEK.map(day => <option key={day} value={day}>{day}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label htmlFor="section-select" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Section</label>
+                                <select id="section-select" value={selectedSection} onChange={e => setSelectedSection(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md dark:bg-gray-700 dark:text-white">
+                                    {DAY_SECTIONS.map(section => <option key={section} value={section} className="capitalize">{section}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="mt-6 flex justify-end space-x-3">
+                            <button type="button" onClick={closeModal} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500">Cancel</button>
+                            <button type="button" onClick={handleConfirmCopy} className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Copy Task</button>
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+                    <header className="bg-white dark:bg-gray-800 shadow-sm p-4 flex justify-between items-center sticky top-0 z-30">
+                        <div className="flex items-center"><Icon name="Feather" size={28} className="text-indigo-600" /><h1 className="text-xl font-bold ml-2">Psyrang Planner</h1></div>
+                        <div className="flex items-center space-x-2 sm:space-x-4">
+                            <button onClick={() => setCurrentDate(d => dateHelpers.subWeeks(new Date(d), 1))} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title="Previous Week"><Icon name="ChevronLeft" /></button>
+                            <span className="font-semibold w-36 text-center tabular-nums">{currentWeekData.label}</span>
+                            <button onClick={() => setCurrentDate(d => dateHelpers.addWeeks(new Date(d), 1))} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title="Next Week"><Icon name="ChevronRight" /></button>
+                             <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title="Toggle Theme"><Icon name={theme === 'light' ? 'Moon' : 'Sun'} /></button>
+                        </div>
+                    </header>
+                    
+                    <main className="p-4 lg:flex lg:space-x-4">
+                        <aside className="hidden lg:block flex-shrink-0 space-y-4" style={{width: '400px'}}><PersistentListCard title="Weekly Tasks" listType="weeklyTasks" /><PersistentListCard title="Reminders" listType="reminders" /></aside>
+                        {isMobile && <div className="mb-4"><PersistentListCard title="Weekly Tasks" listType="weeklyTasks" /></div>}
+                        
+                        <div className="flex-grow min-w-0">
+                            <div className="masonry-grid">
+                                {currentWeekData.days.filter(day => !isMobile || mobileView === 'Week' || (mobileView === 'Today' && dateHelpers.isToday(day.date))).map(day => <DayCard key={day.name} dayData={day} />)}
+                            </div>
+                        </div>
+
+                        {isMobile && <div className="mt-4"><PersistentListCard title="Reminders" listType="reminders" /></div>}
+                    </main>
+
+                    <footer className="text-center p-4 pb-24 lg:pb-4 text-xs text-gray-500">
+                        © {new Date().getFullYear()} Psyrang Planner. All rights reserved. Made with ♥ for a more organized life.
+                    </footer>
+
+                    {isMobile && (
+                        <>
+                            <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex justify-around items-center z-40">
+                                <button onClick={() => setMobileView('Today')} className={`flex flex-col items-center p-2 rounded w-24 ${mobileView === 'Today' ? 'text-indigo-600' : 'text-gray-600 dark:text-gray-300'}`}><Icon name="Calendar" /><span className="text-xs mt-1">Today</span></button>
+                                <button onClick={() => setMobileView('Week')} className={`flex flex-col items-center p-2 rounded w-24 ${mobileView === 'Week' ? 'text-indigo-600' : 'text-gray-600 dark:text-gray-300'}`}><Icon name="CalendarDays" /><span className="text-xs mt-1">Week</span></button>
+                            </nav>
+                            <div className="fixed bottom-20 right-5 z-40">
+                                 <button onClick={() => openModal('fabActions')} className="bg-indigo-600 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center hover:bg-indigo-700 transition-transform transform hover:scale-105" title="Actions">
+                                    <Icon name="Plus" size={28} />
+                                 </button>
+                            </div>
+                        </>
+                    )}
+
+                    <Modal isOpen={isModalOpen} onClose={closeModal}>
+                        {modalContent?.type === 'addTask' && <AddTaskModalContent preselectedList={modalContent.preselectedList} />}
+                        {modalContent?.type === 'fabActions' && <FabActionsModalContent />}
+                        {modalContent?.type === 'loading' && <div className="flex items-center"><Icon name="Loader2" className="animate-spin mr-3" /> {modalContent.message}</div>}
+                        {modalContent?.type === 'error' && <div className="text-red-500 flex items-center"><Icon name="AlertTriangle" className="mr-3" /> {modalContent.message}</div>}
+                        {modalContent?.type === 'weeklyReport' && <WeeklyReportModalContent report={modalContent.report} />}
+                        {modalContent?.type === 'copyTask' && <CopyTaskModalContent task={modalContent.task} />}
+                    </Modal>
+                </div>
+            );
+        };
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<React.StrictMode><App /></React.StrictMode>);
+        
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').then(registration => {
+                    console.log('SW registered: ', registration);
+                }).catch(registrationError => {
+                    console.log('SW registration failed: ', registrationError);
+                });
+            });
+        }
+    </script>
+</body>
+</html>
