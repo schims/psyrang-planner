@@ -1,5 +1,4 @@
-// This is your secure, server-side Netlify Function.
-// It acts as a proxy between your app and the Google AI API.
+// Version 1.1: A more resilient serverless function with better error handling.
 
 exports.handler = async (event) => {
   // Only allow POST requests
@@ -10,13 +9,13 @@ exports.handler = async (event) => {
   // Get the API key from the secure environment variables
   const { GEMINI_API_KEY } = process.env;
   if (!GEMINI_API_KEY) {
-    return { statusCode: 500, body: 'API key not found.' };
+    console.error("FATAL: GEMINI_API_KEY environment variable not set.");
+    return { statusCode: 500, body: 'API key not configured.' };
   }
 
   try {
     const { prompt, type } = JSON.parse(event.body);
     
-    // Construct the request payload for the Gemini API
     const requestBody = {
       contents: [{
         parts: [{ text: prompt }],
@@ -25,12 +24,10 @@ exports.handler = async (event) => {
 
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`;
 
-    // Use the built-in fetch in the Netlify environment
+    console.log(`Calling Gemini API for type: ${type}`);
     const response = await fetch(apiUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
     });
 
@@ -42,16 +39,29 @@ exports.handler = async (event) => {
 
     const data = await response.json();
     
-    // Extract the text content from the Gemini response
-    const textContent = data.candidates[0].content.parts[0].text;
+    if (!data.candidates || data.candidates.length === 0) {
+        console.error("Invalid response from Gemini: No candidates found.");
+        return { statusCode: 500, body: 'Invalid response from AI.' };
+    }
 
-    // The frontend expects a specific JSON structure back, so we re-package it.
+    const textContent = data.candidates[0].content.parts[0].text;
+    console.log("Received text from Gemini:", textContent);
+
     let responsePayload;
+
     if (type === 'breakdown') {
-        // We expect the AI to return a JSON string, so we parse it.
-        responsePayload = JSON.parse(textContent);
+        try {
+            // The AI might return markdown ```json ... ```, so we clean it.
+            const cleanedText = textContent.replace(/```json/g, '').replace(/```/g, '');
+            responsePayload = JSON.parse(cleanedText);
+        } catch (parseError) {
+            console.error("Failed to parse JSON from Gemini for breakdown:", parseError);
+            console.error("Original text was:", textContent);
+            // Fallback: if parsing fails, we can't proceed.
+            return { statusCode: 500, body: 'AI returned a response in an unexpected format.' };
+        }
     } else {
-        // For the report, we send the raw text back.
+        // For the report, we just need the text.
         responsePayload = { report: textContent };
     }
 
@@ -62,7 +72,7 @@ exports.handler = async (event) => {
     };
 
   } catch (error) {
-    console.error('Netlify function error:', error);
+    console.error('Netlify function execution error:', error);
     return {
       statusCode: 500,
       body: JSON.stringify({ error: error.message }),
