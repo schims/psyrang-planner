@@ -12,6 +12,9 @@
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- The tiny helper library for robust IndexedDB storage -->
+    <script src="https://unpkg.com/idb-keyval@6/dist/umd.js"></script>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -104,7 +107,7 @@
             const isMobile = useMediaQuery('(max-width: 1023px)');
             const draggedItem = useRef(null);
 
-            const APP_STATE_KEY = 'psyrangPlannerState_v6';
+            const APP_STATE_KEY = 'psyrangPlannerState'; // Simplified key for idb-keyval
             const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
             const DAY_SECTIONS = ['morning', 'afternoon', 'evening', 'night'];
 
@@ -118,7 +121,6 @@
                 subtasks: [],
             });
 
-            // This function now calls our secure Netlify serverless function
             const callGeminiApi = async (prompt, type) => {
                 const apiEndpoint = '/.netlify/functions/gemini';
                 const response = await fetch(apiEndpoint, {
@@ -134,26 +136,30 @@
                 return await response.json();
             };
 
+            // **MODIFIED:** Load state from IndexedDB
             useEffect(() => {
-                const savedState = localStorage.getItem(APP_STATE_KEY);
-                if (savedState) {
-                    try {
-                        const parsed = JSON.parse(savedState);
-                        if(parsed.weeklyTasks && parsed.reminders && parsed.weeklyPlans) setAppState(parsed);
-                        else throw new Error("Invalid state structure");
-                    } catch(e) { 
-                        console.error("Could not parse saved state, initializing fresh.", e);
+                const loadState = async () => {
+                    const savedState = await idbKeyval.get(APP_STATE_KEY);
+                    if (savedState && savedState.weeklyTasks && savedState.reminders && savedState.weeklyPlans) {
+                        setAppState(savedState);
+                    } else {
                         setAppState({ weeklyTasks: [createNewTask("Finalize research paper outline")], reminders: [createNewTask("Book dentist appointment")], weeklyPlans: {} });
                     }
-                } else {
-                    setAppState({ weeklyTasks: [createNewTask("Finalize research paper outline")], reminders: [createNewTask("Book dentist appointment")], weeklyPlans: {} });
-                }
+                };
+                loadState();
+                
                 if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
                     setTheme('dark');
                 }
             }, []);
 
-            useEffect(() => { localStorage.setItem(APP_STATE_KEY, JSON.stringify(appState)); }, [appState]);
+            // **MODIFIED:** Save state to IndexedDB
+            useEffect(() => {
+                if (appState.weeklyTasks.length > 0 || appState.reminders.length > 0 || Object.keys(appState.weeklyPlans).length > 0) {
+                    idbKeyval.set(APP_STATE_KEY, appState);
+                }
+            }, [appState]);
+
             useEffect(() => { document.documentElement.classList.toggle('dark', theme === 'dark'); }, [theme]);
 
             const currentWeekId = useMemo(() => getWeekId(currentDate), [currentDate]);
