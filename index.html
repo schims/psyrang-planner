@@ -13,8 +13,12 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- The tiny helper library for robust IndexedDB storage -->
+    <!-- Storage Library -->
     <script src="https://unpkg.com/idb-keyval@6/dist/umd.js"></script>
+    
+    <!-- Drag and Drop Library -->
+    <script src="https://unpkg.com/react-beautiful-dnd@13.1.1/dist/react-beautiful-dnd.js"></script>
+
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -47,6 +51,7 @@
 
     <script type="text/babel">
         const { useState, useEffect, useCallback, useRef, useMemo } = React;
+        const { DragDropContext, Droppable, Draggable } = window.ReactBeautifulDnd;
         
         const dateHelpers = {
             startOfWeek: (d, o={w:1}) => {const t=new Date(d); const a=t.getDay(),e=(a<o.w?7:0)+a-o.w; return t.setDate(t.getDate()-e),t.setHours(0,0,0,0),t},
@@ -105,9 +110,8 @@
             const [modalContent, setModalContent] = useState(null);
             
             const isMobile = useMediaQuery('(max-width: 1023px)');
-            const draggedItem = useRef(null);
 
-            const APP_STATE_KEY = 'psyrangPlannerState'; // Simplified key for idb-keyval
+            const APP_STATE_KEY = 'psyrangPlannerState';
             const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
             const DAY_SECTIONS = ['morning', 'afternoon', 'evening', 'night'];
 
@@ -136,7 +140,6 @@
                 return await response.json();
             };
 
-            // **MODIFIED:** Load state from IndexedDB
             useEffect(() => {
                 const loadState = async () => {
                     const savedState = await idbKeyval.get(APP_STATE_KEY);
@@ -153,7 +156,6 @@
                 }
             }, []);
 
-            // **MODIFIED:** Save state to IndexedDB
             useEffect(() => {
                 if (appState.weeklyTasks.length > 0 || appState.reminders.length > 0 || Object.keys(appState.weeklyPlans).length > 0) {
                     idbKeyval.set(APP_STATE_KEY, appState);
@@ -260,49 +262,75 @@
                 closeModal();
             };
 
-            const handleDragStart = (e, task, source) => { draggedItem.current = { task, source }; e.dataTransfer.effectAllowed = 'move'; };
-            const handleDragOver = (e) => e.preventDefault();
-            const handleDrop = (e, target) => {
-                e.preventDefault();
-                if (!draggedItem.current) return;
-                const { task, source } = draggedItem.current;
-                const isCopy = source.type === 'weeklyTasks';
+            const onDragEnd = (result) => {
+                const { source, destination, draggableId, type } = result;
+
+                if (!destination) return;
+                if (source.droppableId === destination.droppableId && source.index === destination.index) return;
                 
                 updateState(draft => {
-                    if (!isCopy) {
-                        const findAndRemove = (tasks) => {
-                            for (let i=0; i<tasks.length; i++) { if (tasks[i].id === task.id) { tasks.splice(i, 1); return true; } }
-                            return false;
-                        };
-                        if (source.type === 'reminders') {
-                            findAndRemove(draft.reminders);
-                        } else if (source.type === 'dayPlan') {
-                            const section = draft.weeklyPlans[source.weekId]?.dailyPlans[source.dayName]?.[source.sectionName];
-                            if (section) findAndRemove(section);
+                    let taskToMove;
+                    
+                    // --- Find and Remove from Source ---
+                    if (source.droppableId === 'weeklyTasks') {
+                        taskToMove = draft.weeklyTasks.splice(source.index, 1)[0];
+                    } else if (source.droppableId === 'reminders') {
+                        taskToMove = draft.reminders.splice(source.index, 1)[0];
+                    } else {
+                        const [dayName, sectionName] = source.droppableId.split('-');
+                        const section = draft.weeklyPlans[currentWeekId]?.dailyPlans[dayName]?.[sectionName];
+                        if (section) {
+                            taskToMove = section.splice(source.index, 1)[0];
                         }
                     }
-                    const taskToDrop = isCopy ? { ...JSON.parse(JSON.stringify(task)), id: createNewId() } : task;
-                    if (target.type === 'weeklyTasks') {
-                        draft.weeklyTasks.push(taskToDrop);
-                    } else if (target.type === 'reminders') {
-                        draft.reminders.push(taskToDrop);
-                    } else if (target.type === 'dayPlan') {
-                        if (!draft.weeklyPlans[target.weekId]) {
-                            draft.weeklyPlans[target.weekId] = { dailyPlans: DAYS_OF_WEEK.reduce((acc, day) => ({ ...acc, [day]: DAY_SECTIONS.reduce((sAcc, sec) => ({...sAcc, [sec]: []}), {}) }), {}) };
-                        }
-                        draft.weeklyPlans[target.weekId].dailyPlans[target.dayName][target.sectionName].push(taskToDrop);
+
+                    if (!taskToMove) return draft;
+
+                    // --- Add to Destination ---
+                    let isCopy = source.droppableId === 'weeklyTasks';
+                    const taskToDrop = isCopy ? { ...JSON.parse(JSON.stringify(taskToMove)), id: createNewId() } : taskToMove;
+                    
+                    if (isCopy) {
+                       // Put the original back if it's a copy operation
+                       draft.weeklyTasks.splice(source.index, 0, taskToMove);
                     }
+
+
+                    if (destination.droppableId === 'weeklyTasks') {
+                        draft.weeklyTasks.splice(destination.index, 0, taskToDrop);
+                    } else if (destination.droppableId === 'reminders') {
+                        draft.reminders.splice(destination.index, 0, taskToDrop);
+                    } else {
+                        const [dayName, sectionName] = destination.droppableId.split('-');
+                        if (!draft.weeklyPlans[currentWeekId]) {
+                            draft.weeklyPlans[currentWeekId] = { dailyPlans: DAYS_OF_WEEK.reduce((acc, day) => ({ ...acc, [day]: DAY_SECTIONS.reduce((sAcc, sec) => ({...sAcc, [sec]: []}), {}) }), {}) };
+                        }
+                        const section = draft.weeklyPlans[currentWeekId].dailyPlans[dayName][sectionName];
+                        section.splice(destination.index, 0, taskToDrop);
+                    }
+
                     return draft;
                 });
-                draggedItem.current = null;
             };
+
 
             const openModal = (type, data = {}) => { setModalContent({ type, ...data }); setModalOpen(true); };
             const closeModal = () => setModalOpen(false);
 
-            const handleAddNewTaskToList = (taskText, listType) => {
+            const handleAddNewTaskToList = (taskText, listType, dayName = null, sectionName = null) => {
                 if (!taskText.trim()) return;
-                updateState(draft => { draft[listType].push(createNewTask(taskText)); return draft; });
+                const newTask = createNewTask(taskText);
+                updateState(draft => { 
+                    if (listType === 'dayPlan') {
+                         if (!draft.weeklyPlans[currentWeekId]) {
+                            draft.weeklyPlans[currentWeekId] = { dailyPlans: DAYS_OF_WEEK.reduce((acc, day) => ({ ...acc, [day]: DAY_SECTIONS.reduce((sAcc, sec) => ({...sAcc, [sec]: []}), {}) }), {}) };
+                        }
+                        draft.weeklyPlans[currentWeekId].dailyPlans[dayName][sectionName].push(newTask);
+                    } else {
+                        draft[listType].push(newTask);
+                    }
+                    return draft; 
+                });
                 closeModal();
             };
             
@@ -328,7 +356,7 @@
                 }
             };
             
-            const TaskItem = ({ task, source }) => {
+            const TaskItem = ({ task, index }) => {
                 const [isEditing, setIsEditing] = useState(false);
                 const [editText, setEditText] = useState(task.text);
                 const inputRef = useRef(null);
@@ -336,26 +364,35 @@
                 const handleSave = () => { if (editText.trim()) handleTaskUpdate(task.id, { text: editText }); setIsEditing(false); };
 
                 return (
-                    <div className="group/task ml-4 first:ml-0">
-                        <div draggable onDragStart={(e) => handleDragStart(e, task, source)} className="flex items-start p-2 rounded-md transition-colors hover:bg-gray-200 dark:hover:bg-gray-700 cursor-grab">
-                            <input type="checkbox" checked={task.completed} onChange={(e) => handleTaskUpdate(task.id, { completed: e.target.checked })} className="mt-1 mr-3 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"/>
-                            <div className="flex-grow min-w-0">
-                                {isEditing ? (
-                                    <input ref={inputRef} value={editText} onChange={(e) => setEditText(e.target.value)} onBlur={handleSave} onKeyDown={(e) => e.key === 'Enter' && handleSave()} className="w-full bg-transparent border-b border-gray-400 focus:outline-none"/>
-                                ) : (
-                                    <p onClick={() => setIsEditing(true)} className={`flex-grow cursor-text truncate ${task.completed ? 'line-through text-gray-500' : ''}`}>{task.text}</p>
-                                )}
+                    <Draggable draggableId={task.id} index={index}>
+                        {(provided, snapshot) => (
+                            <div
+                                ref={provided.innerRef}
+                                {...provided.draggableProps}
+                                {...provided.dragHandleProps}
+                                className={`group/task ml-4 first:ml-0 mb-1 ${snapshot.isDragging ? 'shadow-lg rounded-md bg-gray-100 dark:bg-gray-700' : ''}`}
+                            >
+                                <div className="flex items-start p-2 rounded-md transition-colors hover:bg-gray-200 dark:hover:bg-gray-700">
+                                    <input type="checkbox" checked={task.completed} onChange={(e) => handleTaskUpdate(task.id, { completed: e.target.checked })} className="mt-1 mr-3 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"/>
+                                    <div className="flex-grow min-w-0">
+                                        {isEditing ? (
+                                            <input ref={inputRef} value={editText} onChange={(e) => setEditText(e.target.value)} onBlur={handleSave} onKeyDown={(e) => e.key === 'Enter' && handleSave()} className="w-full bg-transparent border-b border-gray-400 focus:outline-none"/>
+                                        ) : (
+                                            <p onClick={() => setIsEditing(true)} className={`flex-grow cursor-text truncate ${task.completed ? 'line-through text-gray-500' : ''}`}>{task.text}</p>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center ml-2 opacity-0 group-hover/task:opacity-100 transition-opacity flex-shrink-0">
+                                        <button onClick={() => handleAddSubtask(task.id)} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Add Sub-task"><Icon name="Plus" size={16} /></button>
+                                        <button onClick={() => openModal('copyTask', { task })} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Copy to..."><Icon name="Copy" size={16} /></button>
+                                        <button onClick={() => handleAiBreakdown(task.id, task.text)} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="AI Breakdown"><Icon name="Sparkles" size={16} /></button>
+                                        {task.subtasks.length > 0 && <button onClick={() => handleTaskUpdate(task.id, { isCollapsed: !task.isCollapsed })} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Toggle Sub-tasks"><Icon name={task.isCollapsed ? 'ChevronDown' : 'ChevronUp'} size={16} /></button>}
+                                        <button onClick={() => handleDeleteTask(task.id)} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Delete Task"><Icon name="Trash2" size={16} /></button>
+                                    </div>
+                                </div>
+                                {!task.isCollapsed && task.subtasks.length > 0 && <div className="pl-6 border-l-2 border-gray-200 dark:border-gray-700 ml-4">{task.subtasks.map(subtask => <SubTaskItem key={subtask.id} task={subtask} />)}</div>}
                             </div>
-                            <div className="flex items-center ml-2 opacity-0 group-hover/task:opacity-100 transition-opacity flex-shrink-0">
-                                <button onClick={() => handleAddSubtask(task.id)} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Add Sub-task"><Icon name="Plus" size={16} /></button>
-                                <button onClick={() => openModal('copyTask', { task })} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Copy to..."><Icon name="Copy" size={16} /></button>
-                                <button onClick={() => handleAiBreakdown(task.id, task.text)} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="AI Breakdown"><Icon name="Sparkles" size={16} /></button>
-                                {task.subtasks.length > 0 && <button onClick={() => handleTaskUpdate(task.id, { isCollapsed: !task.isCollapsed })} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Toggle Sub-tasks"><Icon name={task.isCollapsed ? 'ChevronDown' : 'ChevronUp'} size={16} /></button>}
-                                <button onClick={() => handleDeleteTask(task.id)} className="p-1 hover:bg-gray-300 dark:hover:bg-gray-600 rounded" title="Delete Task"><Icon name="Trash2" size={16} /></button>
-                            </div>
-                        </div>
-                        {!task.isCollapsed && task.subtasks.length > 0 && <div className="pl-6 border-l-2 border-gray-200 dark:border-gray-700 ml-4">{task.subtasks.map(subtask => <SubTaskItem key={subtask.id} task={subtask} />)}</div>}
-                    </div>
+                        )}
+                    </Draggable>
                 );
             };
 
@@ -378,22 +415,36 @@
                 );
             };
 
-            const Card = ({ title, children, listType, onDrop, isMinimized, onToggleMinimize }) => (
+            const Card = ({ title, children, droppableId, isMinimized, onToggleMinimize }) => (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md flex flex-col">
                     <div className="flex justify-between items-center p-3 border-b border-gray-200 dark:border-gray-700">
                         <h3 className="font-semibold text-gray-800 dark:text-gray-200">{title}</h3>
                         <div className="flex items-center space-x-1">
-                            <button onClick={() => openModal('addTask', { preselectedList: listType })} className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600" title="Add Task"><Icon name="Plus" size={20} className="text-gray-600 dark:text-gray-400"/></button>
+                            <button onClick={() => openModal('addTask', { preselectedList: droppableId })} className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600" title="Add Task"><Icon name="Plus" size={20} className="text-gray-600 dark:text-gray-400"/></button>
                             <button onClick={onToggleMinimize} className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600" title={isMinimized ? "Maximize" : "Minimize"}><Icon name={isMinimized ? "Maximize2" : "Minimize2"} size={20} className="text-gray-600 dark:text-gray-400"/></button>
                         </div>
                     </div>
-                    {!isMinimized && <div onDrop={(e) => onDrop && onDrop(e, {type: listType})} onDragOver={handleDragOver} className="p-2 space-y-1 overflow-y-auto" style={{maxHeight: '40vh'}}>{children}</div>}
+                    {!isMinimized && (
+                        <Droppable droppableId={droppableId}>
+                            {(provided, snapshot) => (
+                                <div 
+                                    ref={provided.innerRef}
+                                    {...provided.droppableProps}
+                                    className={`p-2 space-y-1 overflow-y-auto transition-colors ${snapshot.isDraggingOver ? 'bg-indigo-50 dark:bg-indigo-900/50' : ''}`} 
+                                    style={{maxHeight: '40vh', minHeight: '5rem'}}
+                                >
+                                    {children}
+                                    {provided.placeholder}
+                                </div>
+                            )}
+                        </Droppable>
+                    )}
                 </div>
             );
             const PersistentListCard = ({ title, listType }) => {
                 const [isMinimized, setIsMinimized] = useState(false);
                 const tasks = appState[listType];
-                return <Card title={title} listType={listType} onDrop={handleDrop} isMinimized={isMinimized} onToggleMinimize={() => setIsMinimized(!isMinimized)}>{tasks.length > 0 ? tasks.map(task => <TaskItem key={task.id} task={task} source={{type: listType}} />) : <p className="text-sm text-gray-400 dark:text-gray-500 p-4 text-center">No tasks here yet.</p>}</Card>;
+                return <Card title={title} droppableId={listType} isMinimized={isMinimized} onToggleMinimize={() => setIsMinimized(!isMinimized)}>{tasks.length > 0 ? tasks.map((task, index) => <TaskItem key={task.id} task={task} index={index} />) : <p className="text-sm text-gray-400 dark:text-gray-500 p-4 text-center">No tasks here yet.</p>}</Card>;
             };
             const DayCard = ({ dayData }) => {
                 const [isMinimized, setIsMinimized] = useState(false);
@@ -402,9 +453,26 @@
                     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md flex flex-col masonry-item">
                         <div className={`flex justify-between items-center p-3 border-b border-gray-200 dark:border-gray-700 ${isCurrentDay ? 'bg-indigo-50 dark:bg-indigo-900/50' : ''}`}>
                             <div><h3 className="font-semibold text-gray-800 dark:text-gray-200">{dayData.name}</h3><p className="text-sm text-gray-500 dark:text-gray-400">{dateHelpers.format(dayData.date, 'do MMMM')}</p></div>
-                            <button onClick={() => setIsMinimized(!isMinimized)} className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600" title={isMinimized ? "Maximize" : "Minimize"}><Icon name={isMinimized ? "Maximize2" : "Minimize2"} size={20} className="text-gray-600 dark:text-gray-400"/></button>
+                            <div className="flex items-center space-x-1">
+                                <button onClick={() => openModal('addTask', { preselectedDay: dayData.name })} className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600" title="Add Task"><Icon name="Plus" size={20} className="text-gray-600 dark:text-gray-400"/></button>
+                                <button onClick={() => setIsMinimized(!isMinimized)} className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600" title={isMinimized ? "Maximize" : "Minimize"}><Icon name={isMinimized ? "Maximize2" : "Minimize2"} size={20} className="text-gray-600 dark:text-gray-400"/></button>
+                            </div>
                         </div>
-                        {!isMinimized && <div className="divide-y divide-gray-200 dark:divide-gray-700">{DAY_SECTIONS.map(section => <div key={section} onDrop={(e) => handleDrop(e, {type: 'dayPlan', weekId: currentWeekId, dayName: dayData.name, sectionName: section})} onDragOver={handleDragOver} className="p-2 min-h-[4rem]"><h4 className="text-xs font-bold uppercase text-gray-400 dark:text-gray-500 mb-2 pl-2">{section}</h4>{dayData.plan[section].map(task => <TaskItem key={task.id} task={task} source={{type: 'dayPlan', weekId: currentWeekId, dayName: dayData.name, sectionName: section}} />)}</div>)}</div>}
+                        {!isMinimized && <div className="divide-y divide-gray-200 dark:divide-gray-700">{DAY_SECTIONS.map(section => (
+                            <Droppable key={section} droppableId={`${dayData.name}-${section}`}>
+                                {(provided, snapshot) => (
+                                    <div 
+                                        ref={provided.innerRef}
+                                        {...provided.droppableProps}
+                                        className={`p-2 min-h-[4rem] transition-colors ${snapshot.isDraggingOver ? 'bg-indigo-50 dark:bg-indigo-900/50' : ''}`}
+                                    >
+                                        <h4 className="text-xs font-bold uppercase text-gray-400 dark:text-gray-500 mb-2 pl-2">{section}</h4>
+                                        {dayData.plan[section].map((task, index) => <TaskItem key={task.id} task={task} index={index} />)}
+                                        {provided.placeholder}
+                                    </div>
+                                )}
+                            </Droppable>
+                        ))}</div>}
                     </div>
                 );
             };
@@ -413,18 +481,43 @@
                 return <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center" onClick={onClose}><div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md m-4" onClick={e => e.stopPropagation()}>{children}</div></div>;
             };
 
-            const AddTaskModalContent = ({ preselectedList }) => {
+            const AddTaskModalContent = ({ preselectedList, preselectedDay }) => {
                 const [taskText, setTaskText] = useState('');
-                const [listType, setListType] = useState(preselectedList || 'weeklyTasks');
+                const [listType, setListType] = useState(preselectedList || (preselectedDay ? 'dayPlan' : 'weeklyTasks'));
+                const [dayName, setDayName] = useState(preselectedDay || DAYS_OF_WEEK[0]);
+                const [sectionName, setSectionName] = useState(DAY_SECTIONS[0]);
+                
+                const isDayPlan = listType === 'dayPlan';
+
                 return (
                     <div>
                         <h3 className="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-4">Add New Task</h3>
                         <textarea autoFocus value={taskText} onChange={(e) => setTaskText(e.target.value)} placeholder="e.g., Draft chapter 1 of new book" className="w-full p-2 border rounded-md bg-gray-100 dark:bg-gray-700 dark:text-white focus:ring-indigo-500 focus:border-indigo-500" rows="3"></textarea>
                         <div className="mt-4">
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Add to List:</label>
-                            <select value={listType} onChange={e => setListType(e.target.value)} disabled={!!preselectedList} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md dark:bg-gray-700 dark:text-white disabled:opacity-50 disabled:bg-gray-200 dark:disabled:bg-gray-600"><option value="weeklyTasks">Weekly Tasks</option><option value="reminders">Reminders</option></select>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Add to:</label>
+                            <select value={listType} onChange={e => setListType(e.target.value)} disabled={!!preselectedList || !!preselectedDay} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md dark:bg-gray-700 dark:text-white disabled:opacity-50 disabled:bg-gray-200 dark:disabled:bg-gray-600">
+                                <option value="weeklyTasks">Weekly Tasks</option>
+                                <option value="reminders">Reminders</option>
+                                <option value="dayPlan">Day Plan</option>
+                            </select>
                         </div>
-                        <div className="mt-6 flex justify-end space-x-3"><button type="button" onClick={closeModal} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500">Cancel</button><button type="button" onClick={() => handleAddNewTaskToList(taskText, listType)} className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Add Task</button></div>
+                        {isDayPlan && (
+                            <div className="mt-4 grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Day</label>
+                                    <select value={dayName} onChange={e => setDayName(e.target.value)} disabled={!!preselectedDay} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md dark:bg-gray-700 dark:text-white disabled:opacity-50 disabled:bg-gray-200 dark:disabled:bg-gray-600">
+                                        {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Section</label>
+                                    <select value={sectionName} onChange={e => setSectionName(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md dark:bg-gray-700 dark:text-white">
+                                        {DAY_SECTIONS.map(s => <option key={s} value={s} className="capitalize">{s}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                        )}
+                        <div className="mt-6 flex justify-end space-x-3"><button type="button" onClick={closeModal} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500">Cancel</button><button type="button" onClick={() => handleAddNewTaskToList(taskText, listType, dayName, sectionName)} className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Add Task</button></div>
                     </div>
                 );
             };
@@ -471,57 +564,59 @@
             };
 
             return (
-                <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
-                    <header className="bg-white dark:bg-gray-800 shadow-sm p-4 flex justify-between items-center sticky top-0 z-30">
-                        <div className="flex items-center"><Icon name="Feather" size={28} className="text-indigo-600" /><h1 className="text-xl font-bold ml-2">Psyrang Planner</h1></div>
-                        <div className="flex items-center space-x-2 sm:space-x-4">
-                            <button onClick={() => setCurrentDate(d => dateHelpers.subWeeks(new Date(d), 1))} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title="Previous Week"><Icon name="ChevronLeft" /></button>
-                            <span className="font-semibold w-36 text-center tabular-nums">{currentWeekData.label}</span>
-                            <button onClick={() => setCurrentDate(d => dateHelpers.addWeeks(new Date(d), 1))} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title="Next Week"><Icon name="ChevronRight" /></button>
-                             <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title="Toggle Theme"><Icon name={theme === 'light' ? 'Moon' : 'Sun'} /></button>
-                        </div>
-                    </header>
-                    
-                    <main className="p-4 lg:flex lg:space-x-4">
-                        <aside className="hidden lg:block flex-shrink-0 space-y-4" style={{width: '400px'}}><PersistentListCard title="Weekly Tasks" listType="weeklyTasks" /><PersistentListCard title="Reminders" listType="reminders" /></aside>
-                        {isMobile && <div className="mb-4"><PersistentListCard title="Weekly Tasks" listType="weeklyTasks" /></div>}
+                <DragDropContext onDragEnd={onDragEnd}>
+                    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+                        <header className="bg-white dark:bg-gray-800 shadow-sm p-4 flex justify-between items-center sticky top-0 z-30">
+                            <div className="flex items-center"><Icon name="Feather" size={28} className="text-indigo-600" /><h1 className="text-xl font-bold ml-2">Psyrang Planner</h1></div>
+                            <div className="flex items-center space-x-2 sm:space-x-4">
+                                <button onClick={() => setCurrentDate(d => dateHelpers.subWeeks(new Date(d), 1))} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title="Previous Week"><Icon name="ChevronLeft" /></button>
+                                <span className="font-semibold w-36 text-center tabular-nums">{currentWeekData.label}</span>
+                                <button onClick={() => setCurrentDate(d => dateHelpers.addWeeks(new Date(d), 1))} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title="Next Week"><Icon name="ChevronRight" /></button>
+                                 <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" title="Toggle Theme"><Icon name={theme === 'light' ? 'Moon' : 'Sun'} /></button>
+                            </div>
+                        </header>
                         
-                        <div className="flex-grow min-w-0">
-                            <div className="masonry-grid">
-                                {currentWeekData.days.filter(day => !isMobile || mobileView === 'Week' || (mobileView === 'Today' && dateHelpers.isToday(day.date))).map(day => <DayCard key={day.name} dayData={day} />)}
+                        <main className="p-4 lg:flex lg:space-x-4">
+                            <aside className="hidden lg:block flex-shrink-0 space-y-4" style={{width: '400px'}}><PersistentListCard title="Weekly Tasks" listType="weeklyTasks" /><PersistentListCard title="Reminders" listType="reminders" /></aside>
+                            {isMobile && <div className="mb-4"><PersistentListCard title="Weekly Tasks" listType="weeklyTasks" /></div>}
+                            
+                            <div className="flex-grow min-w-0">
+                                <div className="masonry-grid">
+                                    {currentWeekData.days.filter(day => !isMobile || mobileView === 'Week' || (mobileView === 'Today' && dateHelpers.isToday(day.date))).map(day => <DayCard key={day.name} dayData={day} />)}
+                                </div>
                             </div>
-                        </div>
 
-                        {isMobile && <div className="mt-4"><PersistentListCard title="Reminders" listType="reminders" /></div>}
-                    </main>
+                            {isMobile && <div className="mt-4"><PersistentListCard title="Reminders" listType="reminders" /></div>}
+                        </main>
 
-                    <footer className="text-center p-4 pb-24 lg:pb-4 text-xs text-gray-500">
-                        © {new Date().getFullYear()} Psyrang Planner. All rights reserved. Made with ♥ for a more organized life.
-                    </footer>
+                        <footer className="text-center p-4 pb-24 lg:pb-4 text-xs text-gray-500">
+                            © {new Date().getFullYear()} Psyrang Planner. All rights reserved. Made with ♥ for a more organized life.
+                        </footer>
 
-                    {isMobile && (
-                        <>
-                            <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex justify-around items-center z-40">
-                                <button onClick={() => setMobileView('Today')} className={`flex flex-col items-center p-2 rounded w-24 ${mobileView === 'Today' ? 'text-indigo-600' : 'text-gray-600 dark:text-gray-300'}`}><Icon name="Calendar" /><span className="text-xs mt-1">Today</span></button>
-                                <button onClick={() => setMobileView('Week')} className={`flex flex-col items-center p-2 rounded w-24 ${mobileView === 'Week' ? 'text-indigo-600' : 'text-gray-600 dark:text-gray-300'}`}><Icon name="CalendarDays" /><span className="text-xs mt-1">Week</span></button>
-                            </nav>
-                            <div className="fixed bottom-20 right-5 z-40">
-                                 <button onClick={() => openModal('fabActions')} className="bg-indigo-600 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center hover:bg-indigo-700 transition-transform transform hover:scale-105" title="Actions">
-                                    <Icon name="Plus" size={28} />
-                                 </button>
-                            </div>
-                        </>
-                    )}
+                        {isMobile && (
+                            <>
+                                <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex justify-around items-center z-40">
+                                    <button onClick={() => setMobileView('Today')} className={`flex flex-col items-center p-2 rounded w-24 ${mobileView === 'Today' ? 'text-indigo-600' : 'text-gray-600 dark:text-gray-300'}`}><Icon name="Calendar" /><span className="text-xs mt-1">Today</span></button>
+                                    <button onClick={() => setMobileView('Week')} className={`flex flex-col items-center p-2 rounded w-24 ${mobileView === 'Week' ? 'text-indigo-600' : 'text-gray-600 dark:text-gray-300'}`}><Icon name="CalendarDays" /><span className="text-xs mt-1">Week</span></button>
+                                </nav>
+                                <div className="fixed bottom-20 right-5 z-40">
+                                     <button onClick={() => openModal('fabActions')} className="bg-indigo-600 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center hover:bg-indigo-700 transition-transform transform hover:scale-105" title="Actions">
+                                        <Icon name="Plus" size={28} />
+                                     </button>
+                                </div>
+                            </>
+                        )}
 
-                    <Modal isOpen={isModalOpen} onClose={closeModal}>
-                        {modalContent?.type === 'addTask' && <AddTaskModalContent preselectedList={modalContent.preselectedList} />}
-                        {modalContent?.type === 'fabActions' && <FabActionsModalContent />}
-                        {modalContent?.type === 'loading' && <div className="flex items-center"><Icon name="Loader2" className="animate-spin mr-3" /> {modalContent.message}</div>}
-                        {modalContent?.type === 'error' && <div className="text-red-500 flex items-center"><Icon name="AlertTriangle" className="mr-3" /> {modalContent.message}</div>}
-                        {modalContent?.type === 'weeklyReport' && <WeeklyReportModalContent report={modalContent.report} />}
-                        {modalContent?.type === 'copyTask' && <CopyTaskModalContent task={modalContent.task} />}
-                    </Modal>
-                </div>
+                        <Modal isOpen={isModalOpen} onClose={closeModal}>
+                            {modalContent?.type === 'addTask' && <AddTaskModalContent preselectedList={modalContent.preselectedList} preselectedDay={modalContent.preselectedDay} />}
+                            {modalContent?.type === 'fabActions' && <FabActionsModalContent />}
+                            {modalContent?.type === 'loading' && <div className="flex items-center"><Icon name="Loader2" className="animate-spin mr-3" /> {modalContent.message}</div>}
+                            {modalContent?.type === 'error' && <div className="text-red-500 flex items-center"><Icon name="AlertTriangle" className="mr-3" /> {modalContent.message}</div>}
+                            {modalContent?.type === 'weeklyReport' && <WeeklyReportModalContent report={modalContent.report} />}
+                            {modalContent?.type === 'copyTask' && <CopyTaskModalContent task={modalContent.task} />}
+                        </Modal>
+                    </div>
+                </DragDropContext>
             );
         };
 
@@ -541,5 +636,3 @@
     </script>
 </body>
 </html>
-
-    <!-- The tiny helper library for robust IndexedDB storage -->
